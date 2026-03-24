@@ -1,14 +1,17 @@
 import subprocess
 import pandas as pd
 import os
-import random
+import math
 
 # ---------------------------
-# Run git command
+# Run git command safely
 # ---------------------------
 def run(cmd, cwd):
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
-    return result.stdout.strip()
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+        return result.stdout.strip()
+    except:
+        return ""
 
 # ---------------------------
 # Process each repo
@@ -16,13 +19,21 @@ def run(cmd, cwd):
 def process_repo(path):
     print(f"\n🔍 Processing repo: {path}")
 
-    merges = run(["git", "log", "--merges", "--pretty=%H"], path).split("\n")
+    merges_raw = run(["git", "log", "--merges", "--pretty=%H"], path)
 
+    if not merges_raw:
+        print("⚠️ No merge commits found")
+        return []
+
+    merges = merges_raw.split("\n")
     rows = []
 
-    for merge in merges[:40]:  # limit per repo
+    for merge in merges[:40]:
 
-        parents = run(["git", "rev-list", "--parents", "-n", "1", merge], path).split()
+        parents = run(
+            ["git", "rev-list", "--parents", "-n", "1", merge],
+            path
+        ).split()
 
         if len(parents) < 3:
             continue
@@ -30,16 +41,23 @@ def process_repo(path):
         _, p1, p2 = parents
 
         # ---------------------------
-        # Files changed
+        # File changes per branch
         # ---------------------------
-        files_A = set(run(["git", "diff", "--name-only", p1], path).split("\n"))
-        files_B = set(run(["git", "diff", "--name-only", p2], path).split("\n"))
+        files_p1 = set(run(
+            ["git", "diff", "--name-only", f"{p1}^", p1],
+            path
+        ).split("\n"))
 
-        files_A.discard('')
-        files_B.discard('')
+        files_p2 = set(run(
+            ["git", "diff", "--name-only", f"{p2}^", p2],
+            path
+        ).split("\n"))
 
-        overlap = len(files_A & files_B)
-        total_files = len(files_A | files_B)
+        files_p1.discard('')
+        files_p2.discard('')
+
+        overlap = len(files_p1 & files_p2)
+        total_files = len(files_p1 | files_p2)
 
         if total_files == 0:
             continue
@@ -47,7 +65,7 @@ def process_repo(path):
         overlap_ratio = overlap / total_files
 
         # ---------------------------
-        # Line stats
+        # Line stats of merge
         # ---------------------------
         stat = run(["git", "diff", "--shortstat", merge], path)
 
@@ -57,36 +75,36 @@ def process_repo(path):
             try:
                 added = int(stat.split("insertion")[0].split()[-1])
             except:
-                added = 0
+                pass
 
         if "deletion" in stat:
             try:
                 deleted = int(stat.split("deletion")[0].split()[-1])
             except:
-                deleted = 0
-
-        churn = added + deleted
+                pass
 
         # ---------------------------
-        # IMPROVED LABELING LOGIC
+        # ✅ FIXED CHURN (LOG SCALE)
+        # ---------------------------
+        raw_churn = added + deleted
+        churn = math.log1p(raw_churn)
+
+        # ---------------------------
+        # Label (heuristic)
         # ---------------------------
         if overlap_ratio > 0.4:
             conflict = 1
         elif overlap_ratio < 0.1:
             conflict = 0
         else:
-            # borderline → use churn
-            if churn > 1500:
-                conflict = 1
-            else:
-                conflict = 0
+            conflict = 1 if raw_churn > 1500 else 0
 
         # ---------------------------
         # Store row
         # ---------------------------
         rows.append([
-            len(files_A),
-            len(files_B),
+            len(files_p1),
+            len(files_p2),
             overlap,
             overlap_ratio,
             added,
@@ -95,6 +113,7 @@ def process_repo(path):
             conflict
         ])
 
+    print(f"✅ Extracted {len(rows)} rows from {path}")
     return rows
 
 # ---------------------------
@@ -119,10 +138,10 @@ repos = [
 all_data = []
 
 for repo in repos:
-    if os.path.exists(repo):
+    if os.path.exists(os.path.join(repo, ".git")):
         all_data.extend(process_repo(repo))
     else:
-        print(f"⚠️ Repo not found: {repo}")
+        print(f"⚠️ Not a git repo: {repo}")
 
 # ---------------------------
 # Create DataFrame
@@ -138,32 +157,17 @@ df = pd.DataFrame(all_data, columns=[
     "conflict"
 ])
 
-print("\n📊 Before Balancing:")
+print("\n📊 Dataset Summary:")
 print(df["conflict"].value_counts())
+print(f"\n📈 Total rows: {len(df)}")
 
-# ---------------------------
-# BALANCE DATASET
-# ---------------------------
-df_conflict = df[df.conflict == 1]
-df_no_conflict = df[df.conflict == 0]
-
-min_size = min(len(df_conflict), len(df_no_conflict))
-
-df_conflict = df_conflict.sample(min_size, random_state=42)
-df_no_conflict = df_no_conflict.sample(min_size, random_state=42)
-
-df_balanced = pd.concat([df_conflict, df_no_conflict])
-
-# Shuffle
-df_balanced = df_balanced.sample(frac=1, random_state=42)
-
-print("\n📊 After Balancing:")
-print(df_balanced["conflict"].value_counts())
+if len(df) == 0:
+    print("❌ No data collected.")
+    exit()
 
 # ---------------------------
 # Save dataset
 # ---------------------------
-df_balanced.to_csv("final_dataset.csv", index=False)
+df.to_csv("final_dataset.csv", index=False)
 
 print("\n✅ Dataset created: final_dataset.csv")
-print(f"📈 Total rows: {len(df_balanced)}")
