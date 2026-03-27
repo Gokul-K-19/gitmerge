@@ -4,7 +4,7 @@ import math
 import re
 import os
 import joblib
-import pandas as pd
+import json
 
 # ---------------------------
 # Run git command safely
@@ -60,15 +60,15 @@ def prepare_repo(repo_input):
 # Check if branch exists
 # ---------------------------
 def ensure_branch(repo, branch):
-    local_branches = run(["git", "branch", "--list", branch], repo)
-    remote_branches = run(["git", "branch", "-r", "--list", f"origin/{branch}"], repo)
+    local_branch = run(["git", "branch", "--list", branch], repo)
+    remote_branch = run(["git", "branch", "-r", "--list", f"origin/{branch}"], repo)
 
-    if local_branches:
+    if local_branch:
         return
 
-    if remote_branches:
+    if remote_branch:
         print(f"🌿 Checking out remote branch: {branch}")
-        run(["git", "checkout", "-b", branch, f"origin/{branch}"], repo)
+        run(["git", "checkout", "-B", branch, f"origin/{branch}"], repo)
     else:
         print(f"❌ Branch '{branch}' not found in repo.")
         sys.exit(1)
@@ -84,17 +84,14 @@ def get_merge_base(repo, b1, b2):
     return base
 
 # ---------------------------
-# Get changed files between two commits
+# Get changed files
 # ---------------------------
 def get_changed_files_between(repo, start_commit, end_commit):
-    files = run(
-        ["git", "diff", "--name-only", start_commit, end_commit],
-        repo
-    ).split("\n")
-    return set(f for f in files if f.strip())
+    files = run(["git", "diff", "--name-only", start_commit, end_commit], repo).split("\n")
+    return set(f.strip() for f in files if f.strip())
 
 # ---------------------------
-# Get line churn between two commits
+# Get line churn
 # ---------------------------
 def get_line_churn_between(repo, start_commit, end_commit):
     stat = run(["git", "diff", "--shortstat", start_commit, end_commit], repo)
@@ -112,7 +109,7 @@ def get_line_churn_between(repo, start_commit, end_commit):
     return added + deleted
 
 # ---------------------------
-# Parse changed line ranges between two commits for a file
+# Parse changed line ranges
 # ---------------------------
 def get_changed_line_ranges_between(repo, start_commit, end_commit, file):
     diff = run(["git", "diff", start_commit, end_commit, "--", file], repo)
@@ -132,10 +129,8 @@ def get_changed_line_ranges_between(repo, start_commit, end_commit, file):
 # ---------------------------
 # Compute overlap between ranges
 # ---------------------------
-def compute_line_overlap(ranges1, ranges2):
-    overlap_count = 0
-    overlap_lines = 0
-    max_overlap = 0
+def compute_overlap_ranges(ranges1, ranges2):
+    overlaps = []
 
     for s1, e1 in ranges1:
         for s2, e2 in ranges2:
@@ -143,54 +138,24 @@ def compute_line_overlap(ranges1, ranges2):
             end = min(e1, e2)
 
             if start <= end:
-                overlap_count += 1
-                overlap_len = end - start + 1
-                overlap_lines += overlap_len
-                max_overlap = max(max_overlap, overlap_len)
+                overlaps.append((start, end))
 
-    return overlap_count, overlap_lines, max_overlap
+    return overlaps
 
 # ---------------------------
-# Try real merge conflict detection
-# ---------------------------
-def detect_actual_conflicts(repo, base_branch, merge_branch):
-    print("\n🧪 Checking actual Git merge conflict locations...")
-
-    run(["git", "checkout", base_branch], repo)
-
-    merge_result = run(
-        ["git", "merge", "--no-commit", "--no-ff", merge_branch],
-        repo
-    )
-
-    conflict_files = []
-
-    if "CONFLICT" in merge_result:
-        status = run(["git", "diff", "--name-only", "--diff-filter=U"], repo)
-        conflict_files = [f.strip() for f in status.split("\n") if f.strip()]
-        print("❌ Git reports real merge conflicts.")
-        run(["git", "merge", "--abort"], repo)
-    else:
-        print("✅ Git merge test found no actual conflict.")
-        run(["git", "merge", "--abort"], repo)
-
-    return conflict_files
-
-# ---------------------------
-# Extract global features
+# Extract features
 # ---------------------------
 def extract_features(repo, b1, b2):
     merge_base = get_merge_base(repo, b1, b2)
-
     print(f"\n🔗 Merge base: {merge_base}")
 
     files_1 = get_changed_files_between(repo, merge_base, b1)
     files_2 = get_changed_files_between(repo, merge_base, b2)
 
     overlap_files = files_1 & files_2
-    overlap = len(overlap_files)
     total_files = len(files_1 | files_2)
 
+    overlap = len(overlap_files)
     overlap_ratio = overlap / total_files if total_files > 0 else 0
 
     total_changed_lines_A = get_line_churn_between(repo, merge_base, b1)
@@ -206,22 +171,24 @@ def extract_features(repo, b1, b2):
     for f in overlap_files:
         ranges1 = get_changed_line_ranges_between(repo, merge_base, b1, f)
         ranges2 = get_changed_line_ranges_between(repo, merge_base, b2, f)
+        overlaps = compute_overlap_ranges(ranges1, ranges2)
 
-        overlap_count, overlap_lines, max_overlap = compute_line_overlap(ranges1, ranges2)
+        overlap_lines = sum(end - start + 1 for start, end in overlaps)
+        max_overlap = max((end - start + 1 for start, end in overlaps), default=0)
 
-        total_overlap_ranges += overlap_count
+        total_overlap_ranges += len(overlaps)
         total_overlap_lines += overlap_lines
         max_file_overlap = max(max_file_overlap, max_overlap)
         same_file_churn += len(ranges1) + len(ranges2)
 
         file_risk_details.append({
             "file": f,
-            "overlap_ranges": overlap_count,
+            "branch1_ranges": ranges1,
+            "branch2_ranges": ranges2,
+            "overlap_ranges": overlaps,
             "overlap_lines": overlap_lines,
             "max_overlap": max_overlap,
-            "same_file_churn": len(ranges1) + len(ranges2),
-            "branch1_ranges": ranges1,
-            "branch2_ranges": ranges2
+            "same_file_churn": len(ranges1) + len(ranges2)
         })
 
     same_file_line_overlap_ratio = (
@@ -231,7 +198,8 @@ def extract_features(repo, b1, b2):
 
     churn = math.log1p(total_changed_lines_A + total_changed_lines_B)
 
-    features = pd.DataFrame([[ 
+    # IMPORTANT: use plain list, not pandas DataFrame
+    features = [[
         len(files_1),
         len(files_2),
         overlap,
@@ -244,20 +212,7 @@ def extract_features(repo, b1, b2):
         max_file_overlap,
         same_file_churn,
         churn
-    ]], columns=[
-        "files_A",
-        "files_B",
-        "overlap",
-        "overlap_ratio",
-        "total_changed_lines_A",
-        "total_changed_lines_B",
-        "total_overlap_ranges",
-        "total_overlap_lines",
-        "same_file_line_overlap_ratio",
-        "max_file_overlap",
-        "same_file_churn",
-        "churn"
-    ])
+    ]]
 
     structural_risk = {
         "merge_base": merge_base,
@@ -271,62 +226,118 @@ def extract_features(repo, b1, b2):
     return features, file_risk_details, structural_risk
 
 # ---------------------------
-# Safe auto merge
+# Detect actual git conflicts
 # ---------------------------
-def auto_merge(repo, base, branch):
-    print(f"\n🟢 Switching to {base}")
-    run(["git", "checkout", base], repo)
+def detect_actual_conflicts(repo, base_branch, merge_branch):
+    print("\n🧪 Checking actual Git merge conflict locations...")
 
-    print(f"🔄 Merging {branch} into {base}")
+    run(["git", "checkout", base_branch], repo)
 
-    result = run(
-        ["git", "merge", "--no-commit", "--no-ff", branch],
-        repo
-    )
+    merge_result = run(["git", "merge", "--no-commit", "--no-ff", merge_branch], repo)
 
-    if "CONFLICT" in result:
-        print("❌ Conflict occurred → aborting")
+    conflict_files = []
+
+    if "CONFLICT" in merge_result:
+        status = run(["git", "diff", "--name-only", "--diff-filter=U"], repo)
+        conflict_files = [f.strip() for f in status.split("\n") if f.strip()]
+        print("❌ Git reports real merge conflicts.")
         run(["git", "merge", "--abort"], repo)
-        return False
-
-    commit_output = run(["git", "commit", "-m", "Auto merged by ML system"], repo)
-
-    if "nothing to commit" in commit_output.lower():
-        print("ℹ️ Merge completed, but nothing new to commit.")
     else:
-        print("✅ Auto merge successful")
+        print("✅ Git merge test found no actual conflict.")
+        run(["git", "merge", "--abort"], repo)
 
-    return True
+    return conflict_files
 
 # ---------------------------
 # Explain risk reason
 # ---------------------------
 def explain_risk(prob, threshold, structural_risk, actual_conflict_files):
-    print("\n🧠 Risk Interpretation:")
-
     if actual_conflict_files:
-        print("   → Git directly detected a real merge conflict.")
         return "real_conflict"
 
     if structural_risk["overlap_files"] == 0 and structural_risk["overlap_lines"] == 0:
-        print("   → No overlapping files or overlapping lines were found.")
-        print("   → Elevated ML score is caused by global branch churn only.")
         return "false_positive_churn"
 
     if structural_risk["overlap_files"] > 0 and structural_risk["overlap_lines"] == 0:
-        print("   → Same files were changed, but not the same line regions.")
-        print("   → This is moderate structural risk, not direct line conflict.")
         return "same_file_no_line_overlap"
 
     if structural_risk["overlap_lines"] > 0:
-        if prob >= threshold:
-            print("   → Same files and overlapping line regions were detected.")
-            print("   → ML model also agrees this looks risky.")
-        else:
-            print("   → Structural overlap exists, even though ML score is below threshold.")
         return "real_structural_risk"
 
     return "unknown"
+
+# ---------------------------
+# Pretty print
+# ---------------------------
+def print_terminal_output(prob, threshold, risk_type, file_risk_details, git_conflicts):
+    print("\n================ RESULT ================\n")
+    print(f"🎯 Threshold: {threshold:.2f}")
+    print(f"📊 Probability: {prob:.4f}")
+
+    if git_conflicts:
+        print("\n🚨 FINAL RESULT: REAL GIT CONFLICT DETECTED")
+    elif risk_type == "real_structural_risk":
+        print("\n🔴 FINAL RESULT: HIGH STRUCTURAL RISK")
+    elif risk_type == "same_file_no_line_overlap":
+        print("\n🟡 FINAL RESULT: MEDIUM STRUCTURAL RISK")
+    elif risk_type == "false_positive_churn":
+        print("\n🟢 FINAL RESULT: LOW STRUCTURAL RISK")
+    elif prob >= threshold:
+        print("\n🟡 FINAL RESULT: ML FLAGS THIS AS RISKY")
+    else:
+        print("\n🟢 FINAL RESULT: LOW RISK")
+
+    if file_risk_details:
+        print("\n🔥 Potential Conflict Files:")
+        ranked = sorted(
+            file_risk_details,
+            key=lambda x: (x["overlap_lines"], x["max_overlap"], x["same_file_churn"]),
+            reverse=True
+        )
+
+        for item in ranked[:10]:
+            print(f"\n📄 {item['file']}")
+            print(f"   Branch A changed: {item['branch1_ranges']}")
+            print(f"   Branch B changed: {item['branch2_ranges']}")
+            print(f"   Overlap region:   {item['overlap_ranges']}")
+            print(f"   Overlap lines:    {item['overlap_lines']}")
+            print(f"   Max overlap:      {item['max_overlap']}")
+    else:
+        print("\n✅ No overlapping files detected.")
+
+    if git_conflicts:
+        print("\n🚨 Actual Git Conflict Files:")
+        for f in git_conflicts:
+            print(f"   - {f}")
+
+# ---------------------------
+# Save JSON output
+# ---------------------------
+def save_json(prob, threshold, risk_type, file_risk_details, git_conflicts):
+    ranked = sorted(
+        file_risk_details,
+        key=lambda x: (x["overlap_lines"], x["max_overlap"], x["same_file_churn"]),
+        reverse=True
+    )
+
+    result = {
+        "probability": round(float(prob), 4),
+        "threshold": round(float(threshold), 4),
+        "risk_type": risk_type,
+        "risk_label": (
+            "REAL_GIT_CONFLICT" if git_conflicts else
+            "HIGH" if risk_type == "real_structural_risk" else
+            "MEDIUM" if risk_type == "same_file_no_line_overlap" else
+            "LOW"
+        ),
+        "potential_conflict_files": ranked[:10],
+        "actual_git_conflicts": git_conflicts
+    }
+
+    with open("result.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
+
+    print("\n✅ JSON result saved to result.json")
 
 # ---------------------------
 # MAIN
@@ -339,112 +350,23 @@ repo_input = sys.argv[1]
 base = sys.argv[2]
 branch = sys.argv[3]
 
-# ---------------------------
-# Prepare repo
-# ---------------------------
 repo = prepare_repo(repo_input)
-
-# ---------------------------
-# Ensure branches exist
-# ---------------------------
 ensure_branch(repo, base)
 ensure_branch(repo, branch)
 
-# ---------------------------
-# Load trained model + threshold
-# ---------------------------
 model = joblib.load("conflict_model.pkl")
-best_threshold = joblib.load("conflict_threshold.pkl")
+threshold = joblib.load("conflict_threshold.pkl")
 
-print(f"\n🎯 Loaded trained threshold: {best_threshold}")
+print(f"\n🎯 Loaded trained threshold: {threshold}")
 
-# ---------------------------
-# Extract features
-# ---------------------------
 X, file_risk_details, structural_risk = extract_features(repo, base, branch)
 
-print("\n📊 Extracted Features:")
-print(X.to_string(index=False))
-
-# ---------------------------
-# Predict conflict probability
-# ---------------------------
 prob = model.predict_proba(X)[0][1]
 print(f"\n🔍 Conflict Probability: {prob:.4f}")
 
-# ---------------------------
-# Real Git conflict test
-# ---------------------------
-actual_conflict_files = detect_actual_conflicts(repo, base, branch)
+git_conflicts = detect_actual_conflicts(repo, base, branch)
 
-# ---------------------------
-# Explain result
-# ---------------------------
-risk_type = explain_risk(prob, best_threshold, structural_risk, actual_conflict_files)
+risk_type = explain_risk(prob, threshold, structural_risk, git_conflicts)
 
-# ---------------------------
-# Final Decision Logic
-# ---------------------------
-if actual_conflict_files:
-    print("\n🚨 FINAL RESULT: REAL GIT CONFLICT DETECTED")
-    print("Conflicting files:")
-    for f in actual_conflict_files:
-        print(f"  - {f}")
-
-elif risk_type == "false_positive_churn":
-    print("\n🟢 FINAL RESULT: LOW STRUCTURAL RISK")
-    print("   ML score is elevated, but there is no actual file/line overlap.")
-    print("   This is likely a false positive caused by branch size/churn.")
-    print("   ✅ Merge is likely safe.")
-
-elif risk_type == "same_file_no_line_overlap":
-    print("\n🟡 FINAL RESULT: MEDIUM STRUCTURAL RISK")
-    print("   Same files were modified, but overlapping line edits were not found.")
-    print("   Manual review is recommended.")
-
-    if file_risk_details:
-        print("\n⚠️ Same Files Modified:")
-        ranked = sorted(
-            file_risk_details,
-            key=lambda x: (x["same_file_churn"], x["max_overlap"], x["overlap_lines"]),
-            reverse=True
-        )
-
-        for item in ranked[:10]:
-            print(
-                f"  {item['file']} | "
-                f"same_file_churn={item['same_file_churn']} | "
-                f"overlap_lines={item['overlap_lines']} | "
-                f"max_overlap={item['max_overlap']}"
-            )
-
-elif risk_type == "real_structural_risk":
-    print("\n🔴 FINAL RESULT: HIGH STRUCTURAL RISK")
-    print("   Overlapping files and overlapping line regions were found.")
-    print("   Conflict is likely.")
-
-    if file_risk_details:
-        print("\n🔥 Potential Conflict Files:")
-        ranked = sorted(
-            file_risk_details,
-            key=lambda x: (x["overlap_lines"], x["max_overlap"], x["same_file_churn"]),
-            reverse=True
-        )
-
-        for item in ranked[:10]:
-            print(
-                f"  {item['file']} | "
-                f"overlap_lines={item['overlap_lines']} | "
-                f"max_overlap={item['max_overlap']} | "
-                f"same_file_churn={item['same_file_churn']}"
-            )
-
-else:
-    if prob >= best_threshold:
-        print("\n🟡 FINAL RESULT: ML FLAGS THIS AS RISKY")
-        print("   ML probability crossed the trained threshold.")
-        print("   Manual review recommended.")
-    else:
-        print("\n🟢 FINAL RESULT: LOW RISK")
-        print("   ML probability is below trained threshold.")
-        print("   ✅ Merge is likely safe.")
+print_terminal_output(prob, threshold, risk_type, file_risk_details, git_conflicts)
+save_json(prob, threshold, risk_type, file_risk_details, git_conflicts)
