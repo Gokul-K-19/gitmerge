@@ -3,21 +3,22 @@ name: Scan All Branch Conflict Risks
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   branch-scan:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (FULL history)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Fetch all branches
-        run: git fetch --all
+        run: |
+          git fetch origin +refs/heads/*:refs/remotes/origin/*
+
+      - name: Debug branches
+        run: git branch -a
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,10 +33,10 @@ jobs:
         run: |
           python scan_all_branch_conflicts.py .
 
-      - name: Show branch pair results
+      - name: Show results
         run: cat branch_pair_results.json
 
-      - name: Upload branch scan results
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: branch-pair-results
