@@ -2,37 +2,21 @@ name: Scan All Branch Conflict Risks
 
 on:
   workflow_dispatch:
+    inputs:
+      repo_url:
+        description: "GitHub repository URL to scan"
+        required: true
+        default: "https://github.com/Gokul-K-19/gitmerge.git"
 
 jobs:
   branch-scan:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository (FULL history)
+      - name: Checkout workflow repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Fetch all branches
-        run: |
-          git fetch origin +refs/heads/*:refs/remotes/origin/*
-
-      - name: Debug Git state
-        run: |
-          echo "===== CURRENT DIR ====="
-          pwd
-          echo "===== GIT STATUS ====="
-          git status
-          echo "===== LOCAL BRANCHES ====="
-          git branch
-          echo "===== ALL BRANCHES ====="
-          git branch -a
-          echo "===== REMOTES ====="
-          git remote -v
-          echo "===== HEAD ====="
-          git rev-parse HEAD
-          echo "===== SHOW REFS ====="
-          git show-ref || true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,9 +27,9 @@ jobs:
         run: |
           pip install scikit-learn joblib
 
-      - name: Run branch pair scanner
+      - name: Run branch pair scanner on target repo
         run: |
-          python scan_all_branch_conflicts.py .
+          python scan_all_branch_conflicts.py "${{ github.event.inputs.repo_url }}"
 
       - name: Show JSON output in logs
         run: |
@@ -55,6 +39,8 @@ jobs:
       - name: Write GitHub Actions summary
         run: |
           echo "## 🌿 Branch Conflict Risk Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Scanned Repo:** \`${{ github.event.inputs.repo_url }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Branch 1 | Branch 2 | Risk | Probability | Potential Files |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|----------|------|-------------|-----------------|" >> $GITHUB_STEP_SUMMARY
