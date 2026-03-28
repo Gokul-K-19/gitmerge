@@ -58,7 +58,7 @@ def prepare_repo(repo_input):
         return repo_input
 
 # ---------------------------
-# Get all branches from remote
+# Get all remote branches
 # ---------------------------
 def get_branches(repo):
     remote = run(["git", "branch", "-r", "--format=%(refname:short)"], repo).split("\n")
@@ -72,7 +72,6 @@ def get_branches(repo):
             if name != "HEAD":
                 branches.add(name)
 
-    # fallback if remote list is empty
     if not branches:
         local = run(["git", "branch", "--format=%(refname:short)"], repo).split("\n")
         for b in local:
@@ -83,7 +82,7 @@ def get_branches(repo):
     return sorted(list(branches))
 
 # ---------------------------
-# Resolve branch ref safely
+# Resolve remote ref safely
 # ---------------------------
 def ref(branch):
     return f"origin/{branch}"
@@ -148,34 +147,6 @@ def compute_overlap_ranges(r1, r2):
             if s <= e:
                 overlaps.append((s, e))
     return overlaps
-
-# ---------------------------
-# Detect actual git conflict (CI-safe)
-# ---------------------------
-def detect_actual_conflicts(repo, b1, b2):
-    temp_branch = "__temp_merge_test__"
-
-    # cleanup old temp branch if exists
-    run(["git", "branch", "-D", temp_branch], repo)
-
-    # create temp branch from b1
-    create_out = run(["git", "checkout", "-B", temp_branch, ref(b1)], repo)
-    if "fatal" in create_out.lower() or "error" in create_out.lower():
-        return []
-
-    merge_result = run(["git", "merge", "--no-commit", "--no-ff", ref(b2)], repo)
-
-    conflict_files = []
-
-    if "CONFLICT" in merge_result:
-        status = run(["git", "diff", "--name-only", "--diff-filter=U"], repo)
-        conflict_files = [f.strip() for f in status.split("\n") if f.strip()]
-
-    run(["git", "merge", "--abort"], repo)
-    run(["git", "checkout", "-"], repo)
-    run(["git", "branch", "-D", temp_branch], repo)
-
-    return conflict_files
 
 # ---------------------------
 # Extract features
@@ -261,12 +232,9 @@ def extract_features(repo, b1, b2):
     return features, file_risk_details, structural_risk
 
 # ---------------------------
-# Explain risk
+# Explain risk (scanner-safe)
 # ---------------------------
-def explain_risk(prob, threshold, structural_risk, actual_conflict_files):
-    if actual_conflict_files:
-        return "REAL_GIT_CONFLICT"
-
+def explain_risk(prob, threshold, structural_risk):
     if structural_risk.get("overlap_files", 0) == 0 and structural_risk.get("overlap_lines", 0) == 0:
         return "LOW"
 
@@ -313,8 +281,7 @@ for b1, b2 in pairs:
         continue
 
     prob = model.predict_proba(X)[0][1]
-    git_conflicts = detect_actual_conflicts(repo, b1, b2)
-    risk_label = explain_risk(prob, threshold, structural_risk, git_conflicts)
+    risk_label = explain_risk(prob, threshold, structural_risk)
 
     top_files = sorted(
         file_details,
@@ -328,7 +295,6 @@ for b1, b2 in pairs:
         "probability": round(float(prob), 4),
         "risk_label": risk_label,
         "overlap_files": [f["file"] for f in top_files],
-        "actual_git_conflicts": git_conflicts,
         "structural_risk": structural_risk
     })
 
@@ -336,7 +302,6 @@ for b1, b2 in pairs:
 # Sort results
 # ---------------------------
 risk_order = {
-    "REAL_GIT_CONFLICT": 4,
     "HIGH": 3,
     "MEDIUM": 2,
     "LOW": 1
@@ -360,8 +325,7 @@ for i, item in enumerate(results[:20], start=1):
     print(f"{i}. {item['branch1']} ↔ {item['branch2']}")
     print(f"   Risk: {item['risk_label']}")
     print(f"   Probability: {item['probability']}")
-    print(f"   Potential files: {item['overlap_files']}")
-    print(f"   Actual Git conflicts: {item['actual_git_conflicts']}\n")
+    print(f"   Potential files: {item['overlap_files']}\n")
 
 with open("branch_pair_results.json", "w", encoding="utf-8") as f:
     json.dump(results, f, indent=2)
