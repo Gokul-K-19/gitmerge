@@ -11,7 +11,6 @@ from itertools import combinations
 # Run git command safely + debug
 # ---------------------------
 def run(cmd, cwd):
-    print(f"\n[DEBUG] Running: {' '.join(cmd)}")
     try:
         result = subprocess.run(
             cmd,
@@ -21,14 +20,10 @@ def run(cmd, cwd):
             errors="ignore",
             cwd=cwd
         )
-        print(f"[DEBUG] Return code: {result.returncode}")
-        if result.stdout.strip():
-            print(f"[DEBUG] STDOUT:\n{result.stdout.strip()}")
-        if result.stderr.strip():
-            print(f"[DEBUG] STDERR:\n{result.stderr.strip()}")
+        if result.returncode != 0:
+            return ""
         return result.stdout.strip()
-    except Exception as e:
-        print(f"[DEBUG] Exception while running {' '.join(cmd)}: {e}")
+    except:
         return ""
 
 # ---------------------------
