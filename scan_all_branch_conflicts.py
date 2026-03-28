@@ -8,9 +8,10 @@ import json
 from itertools import combinations
 
 # ---------------------------
-# Run git command safely
+# Run git command safely + debug
 # ---------------------------
 def run(cmd, cwd):
+    print(f"\n[DEBUG] Running: {' '.join(cmd)}")
     try:
         result = subprocess.run(
             cmd,
@@ -20,8 +21,14 @@ def run(cmd, cwd):
             errors="ignore",
             cwd=cwd
         )
+        print(f"[DEBUG] Return code: {result.returncode}")
+        if result.stdout.strip():
+            print(f"[DEBUG] STDOUT:\n{result.stdout.strip()}")
+        if result.stderr.strip():
+            print(f"[DEBUG] STDERR:\n{result.stderr.strip()}")
         return result.stdout.strip()
-    except Exception:
+    except Exception as e:
+        print(f"[DEBUG] Exception while running {' '.join(cmd)}: {e}")
         return ""
 
 # ---------------------------
@@ -54,7 +61,7 @@ def prepare_repo(repo_input):
             sys.exit(1)
 
         print(f"📂 Using local repo: {repo_input}")
-        subprocess.run(["git", "fetch", "--all"], cwd=repo_input)
+        run(["git", "fetch", "--all"], repo_input)
         return repo_input
 
 # ---------------------------
@@ -152,9 +159,14 @@ def compute_overlap_ranges(r1, r2):
 # Extract features
 # ---------------------------
 def extract_features(repo, b1, b2):
+    print(f"\n[DEBUG] Extracting features for {b1} ↔ {b2}")
+
     merge_base = get_merge_base(repo, b1, b2)
     if not merge_base:
+        print("[DEBUG] No merge base found")
         return None, [], {}
+
+    print(f"[DEBUG] Merge base: {merge_base}")
 
     files_1 = get_changed_files_between(repo, merge_base, ref(b1))
     files_2 = get_changed_files_between(repo, merge_base, ref(b2))
@@ -232,7 +244,7 @@ def extract_features(repo, b1, b2):
     return features, file_risk_details, structural_risk
 
 # ---------------------------
-# Explain risk (scanner-safe)
+# Explain risk
 # ---------------------------
 def explain_risk(prob, threshold, structural_risk):
     if structural_risk.get("overlap_files", 0) == 0 and structural_risk.get("overlap_lines", 0) == 0:
@@ -256,6 +268,7 @@ if len(sys.argv) != 2:
 repo_input = sys.argv[1]
 repo = prepare_repo(repo_input)
 
+print("\n[DEBUG] Loading model...")
 model = joblib.load("conflict_model.pkl")
 threshold = joblib.load("conflict_threshold.pkl")
 
@@ -298,9 +311,6 @@ for b1, b2 in pairs:
         "structural_risk": structural_risk
     })
 
-# ---------------------------
-# Sort results
-# ---------------------------
 risk_order = {
     "HIGH": 3,
     "MEDIUM": 2,
@@ -313,9 +323,6 @@ results = sorted(
     reverse=True
 )
 
-# ---------------------------
-# Print ranked results
-# ---------------------------
 print("\n================ TOP RISKY BRANCH PAIRS ================\n")
 
 if not results:

@@ -17,8 +17,22 @@ jobs:
         run: |
           git fetch origin +refs/heads/*:refs/remotes/origin/*
 
-      - name: Debug branches
-        run: git branch -a
+      - name: Debug Git state
+        run: |
+          echo "===== CURRENT DIR ====="
+          pwd
+          echo "===== GIT STATUS ====="
+          git status
+          echo "===== LOCAL BRANCHES ====="
+          git branch
+          echo "===== ALL BRANCHES ====="
+          git branch -a
+          echo "===== REMOTES ====="
+          git remote -v
+          echo "===== HEAD ====="
+          git rev-parse HEAD
+          echo "===== SHOW REFS ====="
+          git show-ref || true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,15 +43,21 @@ jobs:
         run: |
           pip install scikit-learn joblib
 
-      - name: Run branch pair scanner
+      - name: Run branch pair scanner (with debug)
         run: |
-          python scan_all_branch_conflicts.py .
+          python scan_all_branch_conflicts.py . || true
 
-      - name: Show results
-        run: cat branch_pair_results.json
+      - name: Show branch pair results if exists
+        run: |
+          if [ -f branch_pair_results.json ]; then
+            cat branch_pair_results.json
+          else
+            echo "branch_pair_results.json not created"
+          fi
 
-      - name: Upload results
+      - name: Upload results if exists
         uses: actions/upload-artifact@v4
         with:
           name: branch-pair-results
           path: branch_pair_results.json
+          if-no-files-found: warn
