@@ -58,46 +58,12 @@ def prepare_repo(repo_input):
         return repo_input
 
 # ---------------------------
-# Ensure remote branches exist locally
-# ---------------------------
-def ensure_local_tracking_branches(repo):
-    remote_branches = run(["git", "branch", "-r"], repo).split("\n")
-
-    for rb in remote_branches:
-        rb = rb.strip()
-
-        if not rb:
-            continue
-
-        if "->" in rb:
-            continue
-
-        if rb.startswith("origin/"):
-            local_name = rb.replace("origin/", "")
-
-            existing_local = run(["git", "branch", "--list", local_name], repo).strip()
-
-            if not existing_local:
-                subprocess.run(
-                    ["git", "branch", "--track", local_name, rb],
-                    cwd=repo,
-                    capture_output=True,
-                    text=True
-                )
-
-# ---------------------------
-# Get all branches (local + remote)
+# Get all branches from remote
 # ---------------------------
 def get_branches(repo):
-    local = run(["git", "branch", "--format=%(refname:short)"], repo).split("\n")
     remote = run(["git", "branch", "-r", "--format=%(refname:short)"], repo).split("\n")
 
     branches = set()
-
-    for b in local:
-        b = b.strip()
-        if b and b != "HEAD":
-            branches.add(b)
 
     for b in remote:
         b = b.strip()
@@ -106,13 +72,27 @@ def get_branches(repo):
             if name != "HEAD":
                 branches.add(name)
 
+    # fallback if remote list is empty
+    if not branches:
+        local = run(["git", "branch", "--format=%(refname:short)"], repo).split("\n")
+        for b in local:
+            b = b.strip()
+            if b and b != "HEAD":
+                branches.add(b)
+
     return sorted(list(branches))
+
+# ---------------------------
+# Resolve branch ref safely
+# ---------------------------
+def ref(branch):
+    return f"origin/{branch}"
 
 # ---------------------------
 # Get merge base
 # ---------------------------
 def get_merge_base(repo, b1, b2):
-    return run(["git", "merge-base", b1, b2], repo)
+    return run(["git", "merge-base", ref(b1), ref(b2)], repo)
 
 # ---------------------------
 # Changed files
@@ -170,30 +150,30 @@ def compute_overlap_ranges(r1, r2):
     return overlaps
 
 # ---------------------------
-# Detect actual git conflict
+# Detect actual git conflict (CI-safe)
 # ---------------------------
-def detect_actual_conflicts(repo, base_branch, merge_branch):
-    # Clean working tree safety
-    run(["git", "merge", "--abort"], repo)
-    run(["git", "reset", "--hard"], repo)
+def detect_actual_conflicts(repo, b1, b2):
+    temp_branch = "__temp_merge_test__"
 
-    checkout_result = run(["git", "checkout", base_branch], repo)
+    # cleanup old temp branch if exists
+    run(["git", "branch", "-D", temp_branch], repo)
 
-    if "error" in checkout_result.lower():
+    # create temp branch from b1
+    create_out = run(["git", "checkout", "-B", temp_branch, ref(b1)], repo)
+    if "fatal" in create_out.lower() or "error" in create_out.lower():
         return []
 
-    merge_result = run(["git", "merge", "--no-commit", "--no-ff", merge_branch], repo)
+    merge_result = run(["git", "merge", "--no-commit", "--no-ff", ref(b2)], repo)
 
     conflict_files = []
 
     if "CONFLICT" in merge_result:
         status = run(["git", "diff", "--name-only", "--diff-filter=U"], repo)
         conflict_files = [f.strip() for f in status.split("\n") if f.strip()]
-        run(["git", "merge", "--abort"], repo)
-    else:
-        run(["git", "merge", "--abort"], repo)
 
-    run(["git", "reset", "--hard"], repo)
+    run(["git", "merge", "--abort"], repo)
+    run(["git", "checkout", "-"], repo)
+    run(["git", "branch", "-D", temp_branch], repo)
 
     return conflict_files
 
@@ -205,8 +185,8 @@ def extract_features(repo, b1, b2):
     if not merge_base:
         return None, [], {}
 
-    files_1 = get_changed_files_between(repo, merge_base, b1)
-    files_2 = get_changed_files_between(repo, merge_base, b2)
+    files_1 = get_changed_files_between(repo, merge_base, ref(b1))
+    files_2 = get_changed_files_between(repo, merge_base, ref(b2))
 
     overlap_files = files_1 & files_2
     total_files = len(files_1 | files_2)
@@ -214,8 +194,8 @@ def extract_features(repo, b1, b2):
     overlap = len(overlap_files)
     overlap_ratio = overlap / total_files if total_files > 0 else 0
 
-    total_changed_lines_A = get_line_churn_between(repo, merge_base, b1)
-    total_changed_lines_B = get_line_churn_between(repo, merge_base, b2)
+    total_changed_lines_A = get_line_churn_between(repo, merge_base, ref(b1))
+    total_changed_lines_B = get_line_churn_between(repo, merge_base, ref(b2))
 
     total_overlap_ranges = 0
     total_overlap_lines = 0
@@ -225,8 +205,8 @@ def extract_features(repo, b1, b2):
     file_risk_details = []
 
     for f in overlap_files:
-        r1 = get_changed_line_ranges_between(repo, merge_base, b1, f)
-        r2 = get_changed_line_ranges_between(repo, merge_base, b2, f)
+        r1 = get_changed_line_ranges_between(repo, merge_base, ref(b1), f)
+        r2 = get_changed_line_ranges_between(repo, merge_base, ref(b2), f)
         overlaps = compute_overlap_ranges(r1, r2)
 
         overlap_lines = sum(e - s + 1 for s, e in overlaps)
@@ -308,14 +288,9 @@ if len(sys.argv) != 2:
 repo_input = sys.argv[1]
 repo = prepare_repo(repo_input)
 
-# Make sure remote branches are available locally
-ensure_local_tracking_branches(repo)
-
-# Load model
 model = joblib.load("conflict_model.pkl")
 threshold = joblib.load("conflict_threshold.pkl")
 
-# Get all branches
 branches = get_branches(repo)
 
 print("\n🌿 Branches found:")
@@ -388,9 +363,6 @@ for i, item in enumerate(results[:20], start=1):
     print(f"   Potential files: {item['overlap_files']}")
     print(f"   Actual Git conflicts: {item['actual_git_conflicts']}\n")
 
-# ---------------------------
-# Save JSON
-# ---------------------------
 with open("branch_pair_results.json", "w", encoding="utf-8") as f:
     json.dump(results, f, indent=2)
 
