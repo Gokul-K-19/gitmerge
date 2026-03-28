@@ -43,21 +43,42 @@ jobs:
         run: |
           pip install scikit-learn joblib
 
-      - name: Run branch pair scanner (with debug)
+      - name: Run branch pair scanner
         run: |
-          python scan_all_branch_conflicts.py . || true
+          python scan_all_branch_conflicts.py .
 
-      - name: Show branch pair results if exists
+      - name: Show JSON output in logs
         run: |
-          if [ -f branch_pair_results.json ]; then
-            cat branch_pair_results.json
-          else
-            echo "branch_pair_results.json not created"
-          fi
+          echo "===== branch_pair_results.json ====="
+          cat branch_pair_results.json
 
-      - name: Upload results if exists
+      - name: Write GitHub Actions summary
+        run: |
+          echo "## 🌿 Branch Conflict Risk Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch 1 | Branch 2 | Risk | Probability | Potential Files |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|----------|------|-------------|-----------------|" >> $GITHUB_STEP_SUMMARY
+
+          python - << 'EOF'
+          import json
+          import os
+
+          with open("branch_pair_results.json", "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              for item in data[:20]:
+                  b1 = item.get("branch1", "")
+                  b2 = item.get("branch2", "")
+                  risk = item.get("risk_label", "")
+                  prob = item.get("probability", "")
+                  files = ", ".join(item.get("overlap_files", [])) if item.get("overlap_files") else "None"
+                  out.write(f"| {b1} | {b2} | {risk} | {prob} | {files} |\n")
+          EOF
+
+      - name: Upload branch scan results
         uses: actions/upload-artifact@v4
         with:
           name: branch-pair-results
           path: branch_pair_results.json
-          if-no-files-found: warn
+          if-no-files-found: error
