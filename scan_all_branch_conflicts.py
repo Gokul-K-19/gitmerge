@@ -54,19 +54,59 @@ def prepare_repo(repo_input):
             sys.exit(1)
 
         print(f"📂 Using local repo: {repo_input}")
+        subprocess.run(["git", "fetch", "--all"], cwd=repo_input)
         return repo_input
 
 # ---------------------------
-# Get all branches
+# Ensure remote branches exist locally
+# ---------------------------
+def ensure_local_tracking_branches(repo):
+    remote_branches = run(["git", "branch", "-r"], repo).split("\n")
+
+    for rb in remote_branches:
+        rb = rb.strip()
+
+        if not rb:
+            continue
+
+        if "->" in rb:
+            continue
+
+        if rb.startswith("origin/"):
+            local_name = rb.replace("origin/", "")
+
+            existing_local = run(["git", "branch", "--list", local_name], repo).strip()
+
+            if not existing_local:
+                subprocess.run(
+                    ["git", "branch", "--track", local_name, rb],
+                    cwd=repo,
+                    capture_output=True,
+                    text=True
+                )
+
+# ---------------------------
+# Get all branches (local + remote)
 # ---------------------------
 def get_branches(repo):
-    branches_raw = run(["git", "branch", "--format=%(refname:short)"], repo)
-    branches = [b.strip() for b in branches_raw.split("\n") if b.strip()]
+    local = run(["git", "branch", "--format=%(refname:short)"], repo).split("\n")
+    remote = run(["git", "branch", "-r", "--format=%(refname:short)"], repo).split("\n")
 
-    # Exclude HEAD-like weird refs if any
-    branches = [b for b in branches if b not in ["HEAD"]]
+    branches = set()
 
-    return branches
+    for b in local:
+        b = b.strip()
+        if b and b != "HEAD":
+            branches.add(b)
+
+    for b in remote:
+        b = b.strip()
+        if b.startswith("origin/"):
+            name = b.replace("origin/", "")
+            if name != "HEAD":
+                branches.add(name)
+
+    return sorted(list(branches))
 
 # ---------------------------
 # Get merge base
@@ -133,7 +173,14 @@ def compute_overlap_ranges(r1, r2):
 # Detect actual git conflict
 # ---------------------------
 def detect_actual_conflicts(repo, base_branch, merge_branch):
-    run(["git", "checkout", base_branch], repo)
+    # Clean working tree safety
+    run(["git", "merge", "--abort"], repo)
+    run(["git", "reset", "--hard"], repo)
+
+    checkout_result = run(["git", "checkout", base_branch], repo)
+
+    if "error" in checkout_result.lower():
+        return []
 
     merge_result = run(["git", "merge", "--no-commit", "--no-ff", merge_branch], repo)
 
@@ -145,6 +192,8 @@ def detect_actual_conflicts(repo, base_branch, merge_branch):
         run(["git", "merge", "--abort"], repo)
     else:
         run(["git", "merge", "--abort"], repo)
+
+    run(["git", "reset", "--hard"], repo)
 
     return conflict_files
 
@@ -259,9 +308,14 @@ if len(sys.argv) != 2:
 repo_input = sys.argv[1]
 repo = prepare_repo(repo_input)
 
+# Make sure remote branches are available locally
+ensure_local_tracking_branches(repo)
+
+# Load model
 model = joblib.load("conflict_model.pkl")
 threshold = joblib.load("conflict_threshold.pkl")
 
+# Get all branches
 branches = get_branches(repo)
 
 print("\n🌿 Branches found:")
@@ -280,6 +334,7 @@ for b1, b2 in pairs:
     X, file_details, structural_risk = extract_features(repo, b1, b2)
 
     if X is None:
+        print("   ⚠️ Skipped (no merge base found)\n")
         continue
 
     prob = model.predict_proba(X)[0][1]
@@ -298,7 +353,8 @@ for b1, b2 in pairs:
         "probability": round(float(prob), 4),
         "risk_label": risk_label,
         "overlap_files": [f["file"] for f in top_files],
-        "actual_git_conflicts": git_conflicts
+        "actual_git_conflicts": git_conflicts,
+        "structural_risk": structural_risk
     })
 
 # ---------------------------
@@ -321,6 +377,9 @@ results = sorted(
 # Print ranked results
 # ---------------------------
 print("\n================ TOP RISKY BRANCH PAIRS ================\n")
+
+if not results:
+    print("No valid branch pairs found.\n")
 
 for i, item in enumerate(results[:20], start=1):
     print(f"{i}. {item['branch1']} ↔ {item['branch2']}")

@@ -1,0 +1,42 @@
+name: Scan All Branch Conflict Risks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  branch-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all branches
+        run: git fetch --all
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install scikit-learn joblib
+
+      - name: Run branch pair scanner
+        run: |
+          python scan_all_branch_conflicts.py .
+
+      - name: Show branch pair results
+        run: cat branch_pair_results.json
+
+      - name: Upload branch scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: branch-pair-results
+          path: branch_pair_results.json

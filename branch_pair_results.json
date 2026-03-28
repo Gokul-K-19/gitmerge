@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "branch1": "gokul-firebase-fix",
+    "branch2": "main",
+    "probability": 0.0088,
+    "risk_label": "LOW",
+    "overlap_files": [],
+    "actual_git_conflicts": [],
+    "structural_risk": {
+      "merge_base": "dc380120f04b9159167a1ee83aab1a98c47a2b70",
+      "files_A": 13,
+      "files_B": 0,
+      "overlap_files": 0,
+      "overlap_lines": 0,
+      "same_file_overlap_ratio": 0.0
+    }
+  }
+]
