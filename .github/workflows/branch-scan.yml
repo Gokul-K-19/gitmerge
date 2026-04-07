@@ -18,6 +18,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Clean previous cloned repos
+        run: |
+          rm -rf repos
+          rm -f branch_pair_results.json
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -29,6 +34,7 @@ jobs:
 
       - name: Run branch pair scanner on target repo
         run: |
+          echo "🚀 Scanning repo: ${{ github.event.inputs.repo_url }}"
           python scan_all_branch_conflicts.py "${{ github.event.inputs.repo_url }}"
 
       - name: Show JSON output in logs
@@ -53,13 +59,16 @@ jobs:
               data = json.load(f)
 
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
-              for item in data[:20]:
-                  b1 = item.get("branch1", "")
-                  b2 = item.get("branch2", "")
-                  risk = item.get("risk_label", "")
-                  prob = item.get("probability", "")
-                  files = ", ".join(item.get("overlap_files", [])) if item.get("overlap_files") else "None"
-                  out.write(f"| {b1} | {b2} | {risk} | {prob} | {files} |\n")
+              if not data:
+                  out.write("| None | None | None | None | None |\n")
+              else:
+                  for item in data[:20]:
+                      b1 = item.get("branch1", "")
+                      b2 = item.get("branch2", "")
+                      risk = item.get("risk_label", "")
+                      prob = item.get("probability", "")
+                      files = ", ".join(item.get("overlap_files", [])) if item.get("overlap_files") else "None"
+                      out.write(f"| {b1} | {b2} | {risk} | {prob} | {files} |\n")
           EOF
 
       - name: Upload branch scan results
