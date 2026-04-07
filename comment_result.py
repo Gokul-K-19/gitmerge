@@ -35,7 +35,6 @@ if potential_files:
         comment += f"- **{file_name}**\n"
         comment += f"  - Overlap Ranges: `{overlap_ranges}`\n"
         comment += f"  - Overlap Lines: `{overlap_lines}`\n"
-
 else:
     comment += "### ✅ No overlapping files detected\n\n"
 
