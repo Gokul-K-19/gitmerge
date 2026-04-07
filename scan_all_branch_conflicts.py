@@ -5,6 +5,7 @@ import re
 import math
 import joblib
 import json
+import shutil
 from itertools import combinations
 
 # ---------------------------
@@ -23,29 +24,38 @@ def run(cmd, cwd):
         if result.returncode != 0:
             return ""
         return result.stdout.strip()
-    except:
+    except Exception:
         return ""
 
 # ---------------------------
-# Prepare repo
+# Prepare repo (ALWAYS fresh clone for URL input)
 # ---------------------------
 def prepare_repo(repo_input):
     if repo_input.startswith("http://") or repo_input.startswith("https://"):
         repo_name = repo_input.split("/")[-1].replace(".git", "")
         repo_dir = os.path.join(os.getcwd(), "repos", repo_name)
 
+        # 🔥 Always delete old clone so wrong repo is never reused
+        if os.path.exists(repo_dir):
+            print(f"🧹 Removing old cloned repo: {repo_dir}")
+            shutil.rmtree(repo_dir)
+
         os.makedirs(os.path.dirname(repo_dir), exist_ok=True)
 
-        if not os.path.exists(repo_dir):
-            print(f"📥 Cloning repo into: {repo_dir}")
-            subprocess.run(["git", "clone", repo_input, repo_dir], check=True)
-        else:
-            print(f"📂 Using existing cloned repo: {repo_dir}")
+        print(f"📥 Cloning fresh repo into: {repo_dir}")
+        subprocess.run(["git", "clone", repo_input, repo_dir], check=True)
 
-        print("🔄 Fetching latest branches...")
+        print("🔄 Fetching all branches...")
         subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, check=True)
 
+        print("\n🔍 DEBUG INFO")
+        print("Repo input:", repo_input)
+        print("Cloned path:", repo_dir)
+        print("Remote config:")
+        print(run(["git", "remote", "-v"], repo_dir))
+
         return repo_dir
+
     else:
         if not os.path.exists(repo_input):
             print("❌ Repo path does not exist.")
@@ -57,6 +67,12 @@ def prepare_repo(repo_input):
 
         print(f"📂 Using local repo: {repo_input}")
         run(["git", "fetch", "--all"], repo_input)
+
+        print("\n🔍 DEBUG INFO")
+        print("Local repo path:", repo_input)
+        print("Remote config:")
+        print(run(["git", "remote", "-v"], repo_input))
+
         return repo_input
 
 # ---------------------------
@@ -69,11 +85,14 @@ def get_branches(repo):
 
     for b in remote:
         b = b.strip()
+        if not b:
+            continue
         if b.startswith("origin/"):
-            name = b.replace("origin/", "")
-            if name != "HEAD":
+            name = b.replace("origin/", "").strip()
+            if name != "HEAD" and "->" not in name:
                 branches.add(name)
 
+    # fallback to local branches if remote listing fails
     if not branches:
         local = run(["git", "branch", "--format=%(refname:short)"], repo).split("\n")
         for b in local:
