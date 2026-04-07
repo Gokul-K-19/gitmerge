@@ -5,7 +5,8 @@ import re
 import os
 import joblib
 import json
-#testing PR
+import shutil
+
 # ---------------------------
 # Run git command safely
 # ---------------------------
@@ -24,23 +25,31 @@ def run(cmd, cwd):
         return ""
 
 # ---------------------------
-# Clone repo once, reuse later
+# Clone repo fresh every time for URL input
 # ---------------------------
 def prepare_repo(repo_input):
     if repo_input.startswith("http://") or repo_input.startswith("https://"):
         repo_name = repo_input.split("/")[-1].replace(".git", "")
         repo_dir = os.path.join(os.getcwd(), "repos", repo_name)
 
+        # 🔥 Always delete old clone to avoid scanning stale/wrong repo
+        if os.path.exists(repo_dir):
+            print(f"🧹 Removing old cloned repo: {repo_dir}")
+            shutil.rmtree(repo_dir)
+
         os.makedirs(os.path.dirname(repo_dir), exist_ok=True)
 
-        if not os.path.exists(repo_dir):
-            print(f"📥 Cloning repo into: {repo_dir}")
-            subprocess.run(["git", "clone", repo_input, repo_dir], check=True)
-        else:
-            print(f"📂 Using existing cloned repo: {repo_dir}")
+        print(f"📥 Cloning fresh repo into: {repo_dir}")
+        subprocess.run(["git", "clone", repo_input, repo_dir], check=True)
 
         print("🔄 Fetching latest branches...")
         subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, check=True)
+
+        print("\n🔍 DEBUG INFO")
+        print("Repo input:", repo_input)
+        print("Cloned path:", repo_dir)
+        print("Remote config:")
+        print(run(["git", "remote", "-v"], repo_dir))
 
         return repo_dir
 
@@ -54,6 +63,13 @@ def prepare_repo(repo_input):
             sys.exit(1)
 
         print(f"📂 Using local repo: {repo_input}")
+        run(["git", "fetch", "--all"], repo_input)
+
+        print("\n🔍 DEBUG INFO")
+        print("Local repo path:", repo_input)
+        print("Remote config:")
+        print(run(["git", "remote", "-v"], repo_input))
+
         return repo_input
 
 # ---------------------------
@@ -198,7 +214,6 @@ def extract_features(repo, b1, b2):
 
     churn = math.log1p(total_changed_lines_A + total_changed_lines_B)
 
-    # IMPORTANT: use plain list, not pandas DataFrame
     features = [[
         len(files_1),
         len(files_2),
