@@ -102,7 +102,7 @@ def get_line_churn_between(repo, start_commit, end_commit):
 # Process one repo
 # ---------------------------
 def process_repo(path):
-    print(f"\n🔍 Processing repo: {path}")
+    print(f"\nProcessing repo: {path}")
 
     merges_raw = run(["git", "log", "--merges", "--pretty=%H"], path)
 
@@ -186,7 +186,7 @@ def process_repo(path):
             conflict
         ])
 
-    print(f"✅ Extracted {len(rows)} rows from {path}")
+    print(f"Extracted {len(rows)} rows from {path}")
     return rows
 
 # ---------------------------
@@ -228,12 +228,12 @@ df = pd.DataFrame(all_data, columns=[
     "conflict"
 ])
 
-print("\n📊 Dataset Summary:")
+print("\nDataset Summary:")
 print(df["conflict"].value_counts())
 
-print("\n📊 Conflict Ratio:")
+print("\nConflict Ratio:")
 print(df["conflict"].value_counts(normalize=True))
 
 df.to_csv("enhanced_dataset.csv", index=False)
 
-print("\n🔥 Enhanced dataset created successfully!")
+print("\nEnhanced dataset created successfully!")
