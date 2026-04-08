@@ -32,20 +32,20 @@ def prepare_repo(repo_input):
         repo_name = repo_input.split("/")[-1].replace(".git", "")
         repo_dir = os.path.join(os.getcwd(), "repos", repo_name)
 
-        # 🔥 Always delete old clone to avoid scanning stale/wrong repo
+       
         if os.path.exists(repo_dir):
             print(f"🧹 Removing old cloned repo: {repo_dir}")
             shutil.rmtree(repo_dir)
 
         os.makedirs(os.path.dirname(repo_dir), exist_ok=True)
 
-        print(f"📥 Cloning fresh repo into: {repo_dir}")
+        print(f" Cloning fresh repo into: {repo_dir}")
         subprocess.run(["git", "clone", repo_input, repo_dir], check=True)
 
-        print("🔄 Fetching latest branches...")
+        print("Fetching latest branches...")
         subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, check=True)
 
-        print("\n🔍 DEBUG INFO")
+        print("\n DEBUG INFO")
         print("Repo input:", repo_input)
         print("Cloned path:", repo_dir)
         print("Remote config:")
@@ -55,17 +55,17 @@ def prepare_repo(repo_input):
 
     else:
         if not os.path.exists(repo_input):
-            print("❌ Repo path does not exist.")
+            print(" Repo path does not exist.")
             sys.exit(1)
 
         if not os.path.exists(os.path.join(repo_input, ".git")):
-            print("❌ Provided path is not a Git repository.")
+            print(" Provided path is not a Git repository.")
             sys.exit(1)
 
-        print(f"📂 Using local repo: {repo_input}")
+        print(f" Using local repo: {repo_input}")
         run(["git", "fetch", "--all"], repo_input)
 
-        print("\n🔍 DEBUG INFO")
+        print("\n DEBUG INFO")
         print("Local repo path:", repo_input)
         print("Remote config:")
         print(run(["git", "remote", "-v"], repo_input))
@@ -83,10 +83,10 @@ def ensure_branch(repo, branch):
         return
 
     if remote_branch:
-        print(f"🌿 Checking out remote branch: {branch}")
+        print(f" Checking out remote branch: {branch}")
         run(["git", "checkout", "-B", branch, f"origin/{branch}"], repo)
     else:
-        print(f"❌ Branch '{branch}' not found in repo.")
+        print(f" Branch '{branch}' not found in repo.")
         sys.exit(1)
 
 # ---------------------------
@@ -95,7 +95,7 @@ def ensure_branch(repo, branch):
 def get_merge_base(repo, b1, b2):
     base = run(["git", "merge-base", b1, b2], repo)
     if not base:
-        print("❌ Could not find merge base between branches.")
+        print(" Could not find merge base between branches.")
         sys.exit(1)
     return base
 
@@ -244,7 +244,7 @@ def extract_features(repo, b1, b2):
 # Detect actual git conflicts
 # ---------------------------
 def detect_actual_conflicts(repo, base_branch, merge_branch):
-    print("\n🧪 Checking actual Git merge conflict locations...")
+    print("\n Checking actual Git merge conflict locations...")
 
     run(["git", "checkout", base_branch], repo)
 
@@ -255,10 +255,10 @@ def detect_actual_conflicts(repo, base_branch, merge_branch):
     if "CONFLICT" in merge_result:
         status = run(["git", "diff", "--name-only", "--diff-filter=U"], repo)
         conflict_files = [f.strip() for f in status.split("\n") if f.strip()]
-        print("❌ Git reports real merge conflicts.")
+        print(" Git reports real merge conflicts.")
         run(["git", "merge", "--abort"], repo)
     else:
-        print("✅ Git merge test found no actual conflict.")
+        print(" Git merge test found no actual conflict.")
         run(["git", "merge", "--abort"], repo)
 
     return conflict_files
@@ -286,24 +286,24 @@ def explain_risk(prob, threshold, structural_risk, actual_conflict_files):
 # ---------------------------
 def print_terminal_output(prob, threshold, risk_type, file_risk_details, git_conflicts):
     print("\n================ RESULT ================\n")
-    print(f"🎯 Threshold: {threshold:.2f}")
-    print(f"📊 Probability: {prob:.4f}")
+    print(f" Threshold: {threshold:.2f}")
+    print(f"Probability: {prob:.4f}")
 
     if git_conflicts:
-        print("\n🚨 FINAL RESULT: REAL GIT CONFLICT DETECTED")
+        print("\n FINAL RESULT: REAL GIT CONFLICT DETECTED")
     elif risk_type == "real_structural_risk":
-        print("\n🔴 FINAL RESULT: HIGH STRUCTURAL RISK")
+        print("\n FINAL RESULT: HIGH STRUCTURAL RISK")
     elif risk_type == "same_file_no_line_overlap":
-        print("\n🟡 FINAL RESULT: MEDIUM STRUCTURAL RISK")
+        print("\n FINAL RESULT: MEDIUM STRUCTURAL RISK")
     elif risk_type == "false_positive_churn":
-        print("\n🟢 FINAL RESULT: LOW STRUCTURAL RISK")
+        print("\n FINAL RESULT: LOW STRUCTURAL RISK")
     elif prob >= threshold:
-        print("\n🟡 FINAL RESULT: ML FLAGS THIS AS RISKY")
+        print("\n FINAL RESULT: ML FLAGS THIS AS RISKY")
     else:
-        print("\n🟢 FINAL RESULT: LOW RISK")
+        print("\n FINAL RESULT: LOW RISK")
 
     if file_risk_details:
-        print("\n🔥 Potential Conflict Files:")
+        print("\n Potential Conflict Files:")
         ranked = sorted(
             file_risk_details,
             key=lambda x: (x["overlap_lines"], x["max_overlap"], x["same_file_churn"]),
@@ -311,17 +311,17 @@ def print_terminal_output(prob, threshold, risk_type, file_risk_details, git_con
         )
 
         for item in ranked[:10]:
-            print(f"\n📄 {item['file']}")
+            print(f"\n {item['file']}")
             print(f"   Branch A changed: {item['branch1_ranges']}")
             print(f"   Branch B changed: {item['branch2_ranges']}")
             print(f"   Overlap region:   {item['overlap_ranges']}")
             print(f"   Overlap lines:    {item['overlap_lines']}")
             print(f"   Max overlap:      {item['max_overlap']}")
     else:
-        print("\n✅ No overlapping files detected.")
+        print("\n No overlapping files detected.")
 
     if git_conflicts:
-        print("\n🚨 Actual Git Conflict Files:")
+        print("\n Actual Git Conflict Files:")
         for f in git_conflicts:
             print(f"   - {f}")
 
@@ -352,7 +352,7 @@ def save_json(prob, threshold, risk_type, file_risk_details, git_conflicts):
     with open("result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
-    print("\n✅ JSON result saved to result.json")
+    print("\n JSON result saved to result.json")
 
 # ---------------------------
 # MAIN
@@ -372,12 +372,12 @@ ensure_branch(repo, branch)
 model = joblib.load("conflict_model.pkl")
 threshold = joblib.load("conflict_threshold.pkl")
 
-print(f"\n🎯 Loaded trained threshold: {threshold}")
+print(f"\n Loaded trained threshold: {threshold}")
 
 X, file_risk_details, structural_risk = extract_features(repo, base, branch)
 
 prob = model.predict_proba(X)[0][1]
-print(f"\n🔍 Conflict Probability: {prob:.4f}")
+print(f"\n Conflict Probability: {prob:.4f}")
 
 git_conflicts = detect_actual_conflicts(repo, base, branch)
 
