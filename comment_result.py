@@ -17,7 +17,7 @@ actual_conflicts = result.get("actual_git_conflicts", [])
 # ---------------------------
 # Build PR comment body
 # ---------------------------
-comment = f"""## 🤖 ML Merge Conflict Analysis
+comment = f"""## ML Merge Conflict Analysis
 
 **Risk Label:** `{risk_label}`  
 **Conflict Probability:** `{probability}`  
@@ -26,7 +26,7 @@ comment = f"""## 🤖 ML Merge Conflict Analysis
 """
 
 if potential_files:
-    comment += "### 🔥 Potential Conflict Files\n\n"
+    comment += "### Potential Conflict Files\n\n"
     for item in potential_files[:10]:
         file_name = item.get("file", "unknown")
         overlap_ranges = item.get("overlap_ranges", [])
@@ -36,14 +36,14 @@ if potential_files:
         comment += f"  - Overlap Ranges: `{overlap_ranges}`\n"
         comment += f"  - Overlap Lines: `{overlap_lines}`\n"
 else:
-    comment += "### ✅ No overlapping files detected\n\n"
+    comment += "### No overlapping files detected\n\n"
 
 if actual_conflicts:
-    comment += "\n### 🚨 Actual Git Conflict Files\n\n"
+    comment += "\n### Actual Git Conflict Files\n\n"
     for f in actual_conflicts:
         comment += f"- `{f}`\n"
 else:
-    comment += "\n### ✅ No actual Git merge conflicts detected\n"
+    comment += "\n### No actual Git merge conflicts detected\n"
 
 comment += "\n---\nGenerated automatically by ML Merge Conflict Predictor."
 
