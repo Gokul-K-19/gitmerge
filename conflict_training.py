@@ -16,7 +16,7 @@ from sklearn.metrics import (
 # ---------------------------
 df = pd.read_csv("enhanced_dataset.csv")
 
-print("📊 Original Dataset:")
+print(" Original Dataset:")
 print(df["conflict"].value_counts())
 
 # ---------------------------
@@ -81,7 +81,7 @@ thresholds = [0.30, 0.40, 0.50, 0.60]
 best_threshold = 0.50
 best_f1 = -1
 
-print("\n🎯 Threshold Tuning:")
+print("\n Threshold Tuning:")
 
 for t in thresholds:
     y_pred_temp = (y_probs >= t).astype(int)
@@ -96,17 +96,17 @@ for t in thresholds:
         best_f1 = f1
         best_threshold = t
 
-print(f"\n✅ Best Threshold: {best_threshold}")
+print(f"\n Best Threshold: {best_threshold}")
 
 # ---------------------------
 # Final evaluation
 # ---------------------------
 y_pred = (y_probs >= best_threshold).astype(int)
 
-print("\n📊 Classification Report:")
+print("\n Classification Report:")
 print(classification_report(y_test, y_pred))
 
-print("\n📊 Confusion Matrix:")
+print("\n Confusion Matrix:")
 print(confusion_matrix(y_test, y_pred))
 
 # ---------------------------
@@ -117,7 +117,7 @@ feature_importance = pd.DataFrame({
     "importance": model.feature_importances_
 }).sort_values(by="importance", ascending=False)
 
-print("\n🔥 Feature Importance:")
+print("\n Feature Importance:")
 print(feature_importance.to_string(index=False))
 
 # ---------------------------
@@ -126,4 +126,4 @@ print(feature_importance.to_string(index=False))
 joblib.dump(model, "conflict_model.pkl")
 joblib.dump(best_threshold, "conflict_threshold.pkl")
 
-print("\n✅ Model + threshold saved")
+print("\n Model + threshold saved")
